@@ -3,7 +3,7 @@ set -e
 
 VENDOR="0bda"
 PRODUCT="8157"
-DRIVER_DIR="/home/ss/realtek-r8152-linux"
+DRIVER_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 BLACKLIST_FILE="/etc/modprobe.d/blacklist-cdc_ncm.conf"
 
 echo "=== RTL8157 / Wavlink 5G fix ==="
@@ -23,7 +23,13 @@ echo "[3] Blacklisting cdc_ncm..."
 if ! grep -q "blacklist cdc_ncm" "$BLACKLIST_FILE" 2>/dev/null; then
     echo -e "blacklist cdc_ncm\nblacklist cdc_mbim" | sudo tee "$BLACKLIST_FILE" > /dev/null
 fi
-sudo update-initramfs -u
+if command -v dracut >/dev/null 2>&1; then
+    sudo dracut --force
+elif command -v update-initramfs >/dev/null 2>&1; then
+    sudo update-initramfs -u
+else
+    echo "    WARN: no dracut or update-initramfs found; blacklist may not persist across reboots"
+fi
 
 # --- Step 3: Unload competing drivers ---
 echo "[4] Unloading cdc_ncm/cdc_mbim if loaded..."
@@ -95,7 +101,16 @@ echo "[11] Speed check:"
 ethtool "$IFACE" 2>/dev/null || echo "    ethtool not available"
 
 echo "[12] USB driver state:"
-lsusb -t 2>/dev/null | grep -A6 "Bus 004"
+USB_BUSNUM=$(cat /sys/bus/usb/devices/${USB_PATH}/busnum 2>/dev/null)
+if [ -n "$USB_BUSNUM" ]; then
+    lsusb -t 2>/dev/null | awk -v bus="$(printf 'Bus %02d' "$USB_BUSNUM")" '
+        $0 ~ bus {p=1; print; next}
+        p && /^\/:/ {p=0}
+        p {print}
+    '
+else
+    lsusb -t 2>/dev/null
+fi
 
 echo ""
 echo "=== Done. Run: sudo nmcli device connect $IFACE ==="
